@@ -1,0 +1,25 @@
+# For more details on the format and content:
+# https://github.com/robocorp/rcc/blob/master/docs/recipes.md#what-is-in-robotyaml
+
+tasks:
+  Default:
+    command:
+      - python
+      - -m
+      - robocorp.tasks
+      - run
+      - tasks.py
+
+preRunScripts:
+  - uv --version
+  - bash -c "export UV_PYTHON=python && uv venv && uv pip install --python .venv/bin/python 'setuptools>=65.5.1' poetry-core hatchling editables && uv sync --all-packages --no-build-isolation"
+
+condaConfigFile: conda.yaml
+artifactsDir: output
+
+PATH:
+  - .
+PYTHONPATH:
+  - .
+ignoreFiles:
+  - .gitignore

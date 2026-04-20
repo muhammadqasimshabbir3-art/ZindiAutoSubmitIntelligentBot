@@ -1,0 +1,111 @@
+definitions:
+  steps:
+    - step: &run-pre-commit
+        name: Run Pre-Commit
+        image: python:3.11
+        script:
+          - pip install uv pre-commit
+          - pre-commit install
+          - pre-commit run --all-files
+
+    - step: &run-pytest
+        name: Run Pytest Unit Tests
+        image: python:3.11
+        script:
+          # Install UV
+          - pip install uv
+          # Install dependencies using UV (system-wide for CI)
+          - uv pip install --system -e .
+          - uv pip install --system pytest pytest-cov
+          # Run tests
+          - pytest tests/ --cov=src --cov=ta_sdk --cov-report=term-missing
+
+    - step: &run-build
+        name: Build Python Package
+        image: python:3.11
+        script:
+
+          - pip install uv build twine
+          # Install project dependencies (system-wide for CI)
+          - uv pip install --system -e .
+
+          - python -m build
+        artifacts:
+          - dist/*
+
+    # ============================================
+    # DEPLOYMENT STEPS
+    # ============================================
+
+    - step: &deploy
+        name: Deploy to workspace on Robocloud
+        image: python:3.11.5
+        script:
+          - pipe: docker://thoughtfulai/pipes:deploy-robocloud-v0
+            variables:
+              ROBOCORP_API_KEY: "2Lpzqf5jTMKzrQ8YgDngdvwGQ8D4EPuISeLwWS7hRKS3idunsaqUyInyPsXurjHg8vSqwKOkXejcDZHoCPS3YHMmWxyxZOedZQfZi41wLosyGvBk4cNIBtZgY1ncacBZ"
+              WORKSPACE_ID: "c1bcee33-4c6c-4df1-8ce0-5fbd49808c3e"
+              ROBOT_ID: "1014d2ca-c417-4a35-b5d5-1c586370d22f"
+
+    - step: &deploy-server
+        name: Deploy to Server
+        image: atlassian/default-image:3
+        script:
+          # Setup SSH
+          - mkdir -p ~/.ssh
+          - echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
+          - chmod 600 ~/.ssh/id_rsa
+          - ssh-keyscan -H $DEPLOY_HOST >> ~/.ssh/known_hosts
+          # Deploy files
+          - echo "Deploying to server: $DEPLOY_HOST"
+          - |
+            rsync -avz --exclude '.git' \
+              --exclude '.venv' \
+              --exclude '__pycache__' \
+              --exclude '*.pyc' \
+              --exclude 'output/' \
+              ./ $DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/
+          # Optional: Restart service
+          - |
+            if [ ! -z "$RESTART_COMMAND" ]; then
+              ssh $DEPLOY_USER@$DEPLOY_HOST "$RESTART_COMMAND"
+            fi
+        after-script:
+          - echo "✅ Deployment to server completed"
+
+pipelines:
+  default:
+    - parallel:
+        - step: *run-pre-commit
+        - step: *run-pytest
+        - step: *run-build
+    - step: *deploy
+
+  # Default pipeline (for feature branches that are not PRs)
+  # This runs for branches that don't match master/main
+  defaults:
+    - parallel:
+        - step: *run-pre-commit
+        - step: *run-pytest
+        - step: *run-build
+    - step: *deploy
+
+  # Master branch - Full CI/CD with deployment
+  branches:
+    master:
+      - parallel:
+          - step: *run-pre-commit
+          - step: *run-pytest
+          - step: *run-build
+      - step:
+          <<: *deploy
+          deployment: Prod
+
+    main:
+      - parallel:
+          - step: *run-pre-commit
+          - step: *run-pytest
+          - step: *run-build
+      - step:
+          <<: *deploy
+          deployment: Prod
